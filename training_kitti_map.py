@@ -27,7 +27,7 @@ class KITTIConfig:
    #     is_test = False
         #gpu_id = 0
 
-        self.root = "/home/allie/dataset/kitti_odometry"
+        self.root = "/home/allie/dataset/kitti_odometry/dataset"
 
         self.dataset = 'KITTIMap'
     
