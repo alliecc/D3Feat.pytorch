@@ -81,6 +81,8 @@ class ThreeDMatchDataset(data.Dataset):
             print("PKL file not found.")
             return
 
+
+        import pdb; pdb.set_trace()
         for idpair in self.correspondences.keys():
             src = idpair.split("@")[0]
             tgt = idpair.split("@")[1]
