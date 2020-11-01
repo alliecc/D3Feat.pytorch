@@ -9,7 +9,7 @@ import pickle
 import copy
 import open3d
 import torch
-
+from scipy.spatial.distance import cdist
 # Dataset parent class
 #from datasets.common import Dataset
 #from datasets.ThreeDMatch import rotate
@@ -17,6 +17,26 @@ import torch
 kitti_icp_cache = {}
 kitti_cache = {}
 
+
+def rotation_matrix(augment_axis, augment_rotation):
+    angles = np.random.rand(3) * 2 * np.pi * augment_rotation
+    Rx = np.array([[1, 0, 0],
+                   [0, np.cos(angles[0]), -np.sin(angles[0])],
+                   [0, np.sin(angles[0]), np.cos(angles[0])]])
+    Ry = np.array([[np.cos(angles[1]), 0, np.sin(angles[1])],
+                   [0, 1, 0],
+                   [-np.sin(angles[1]), 0, np.cos(angles[1])]])
+    Rz = np.array([[np.cos(angles[2]), -np.sin(angles[2]), 0],
+                   [np.sin(angles[2]), np.cos(angles[2]), 0],
+                   [0, 0, 1]])
+    # R = Rx @ Ry @ Rz
+    if augment_axis == 1:
+        return random.choice([Rx, Ry, Rz]) 
+    return Rx @ Ry @ Rz
+    
+def translation_matrix(augment_translation):
+    T = np.random.rand(3) * augment_translation
+    return T
 
 def make_open3d_point_cloud(xyz, color=None):
     pcd = open3d.geometry.PointCloud()
@@ -92,16 +112,17 @@ class KITTIMapDataset(torch.utils.data.Dataset):
         self.num_threads = input_threads
         #self.load_test = load_test
         self.root = root
-        self.icp_path = None#'data/kitti/icp'
+        self.icp_path = "data"#'data/kitti/icp'
         self.voxel_size = first_subsampling_dl
         self.matching_search_voxel_size = first_subsampling_dl * 1.5
-
+        self.split = split
         # Initiate containers
         self.anc_points = {'train': [], 'val': [], 'test': []}
         self.files = {'train': [], 'val': [], 'test': []}
 
         self.prepare_kitti_ply(split=split)
         self.config = config
+        self.read_map_data()
 
         #if self.load_test:
         #    self.prepare_kitti_ply('test')
@@ -109,12 +130,33 @@ class KITTIMapDataset(torch.utils.data.Dataset):
         #    self.prepare_kitti_ply(split='train')
         #    self.prepare_kitti_ply(split='val')
 
+    def __len__(self):
+        return self.num
+
+    def read_map_data(self):
+
+        subset_names = open(self.DATA_FILES[self.split]).read().split()
+        self.dict_maps = {}
+        for id_log in subset_names:
+            path_map = os.path.join(self.path_data_root, "kitti_maps_cmr_new", "map-%s_0.05.ply" % (id_log))
+            print("Load map : ", path_map)
+            pcd = open3d.io.read_point_cloud(path_map)
+            pcd = pcd.voxel_down_sample(self.config.first_subsampling_dl)
+            pcd, ind = pcd.remove_radius_outlier(nb_points=7, radius=self.config.first_subsampling_dl*2)
+
+
+            self.dict_maps[id_log] = torch.Tensor(np.asarray(pcd.points)).to(self.config.device)
+
+
+
+            
     def prepare_kitti_ply(self, split='train'):
         max_time_diff = self.MAX_TIME_DIFF
         subset_names = open(self.DATA_FILES[split]).read().split()
         for dirname in subset_names:
             drive_id = int(dirname)
             fnames = glob.glob(self.root + '/sequences/%02d/velodyne/*.bin' % drive_id)
+
             assert len(fnames) > 0, f"Make sure that the path {self.root} has data {dirname}"
             inames = sorted([int(os.path.split(fname)[-1][:-4]) for fname in fnames])
 
@@ -143,18 +185,20 @@ class KITTIMapDataset(torch.utils.data.Dataset):
         #             pair_time = time_diff + start_time
         #             if pair_time in inames:
         #                 self.files[split].append((drive_id, start_time, pair_time))
-        if split == 'train':
-            self.num_train = len(self.files[split])
-            print("Num_train", self.num_train)
-        elif split == 'val':
-            self.num_val = len(self.files[split])
-            print("Num_val", self.num_val)
-        else:
-            # pair (8, 15, 58) is wrong.
-            self.files[split].remove((8, 15, 58))
-            self.num_test = len(self.files[split])
-            print("Num_test", self.num_test)
+        #if split == 'train':
+        #    self.num = len(self.files[split])
+        #    print("Num_train", self.num)
+        #elif split == 'val':
+        #    self.num = len(self.files[split])
+        #    print("Num_val", self.num)
+        #else:
+        #    # pair (8, 15, 58) is wrong.
+        #    self.files[split].remove((8, 15, 58))
+        #    self.num = len(self.files[split])
+        #    print("Num_test", self.num)
+#
 
+        self.num = len(self.files[split])
         for idx in range(len(self.files[split])):
             drive = self.files[split][idx][0]
             filename = self._get_velodyne_fn(drive, self.files[split][idx][1])
@@ -176,17 +220,17 @@ class KITTIMapDataset(torch.utils.data.Dataset):
             batch_n = 0
 
             # Initiate parameters depending on the chosen split
-            if self.split == 'train':
-                gen_indices = np.random.permutation(self.num_train)
-                # gen_indices = np.arange(self.num_train)
-
-            elif self.split == 'val':
-                gen_indices = np.random.permutation(self.num_val)
-                # gen_indices = np.arange(self.num_val)
-
-            elif self.split == 'test':
-                # gen_indices = np.random.permutation(self.num_test)
-                gen_indices = np.arange(self.num_test)
+            #if self.split == 'train':
+            #    gen_indices = np.random.permutation(self.num_train)
+            #    # gen_indices = np.arange(self.num_train)
+#
+            #elif self.split == 'val':
+            #    gen_indices = np.random.permutation(self.num_val)
+            #    # gen_indices = np.arange(self.num_val)
+#
+            #elif self.split == 'test':
+            #    # gen_indices = np.random.permutation(self.num_test)
+            gen_indices = np.arange(self.num)
 
             print(gen_indices)
             # Generator loop
@@ -296,8 +340,8 @@ class KITTIMapDataset(torch.utils.data.Dataset):
     #    return inames
 #
     def __getitem__(self,idx):# split, idx):
-        drive = self.files[split][idx][0]
-        t0, t1 = self.files[split][idx][1], self.files[split][idx][2]
+        drive = self.files[self.split][idx][0]
+        t0, t1 = self.files[self.split][idx][1], self.files[self.split][idx][2]
         all_odometry = self.get_video_odometry(drive, [t0, t1])
         positions = [self.odometry_to_positions(odometry) for odometry in all_odometry]
         fname0 = self._get_velodyne_fn(drive, t0)
@@ -341,30 +385,65 @@ class KITTIMapDataset(torch.utils.data.Dataset):
 
         pcd0 = make_open3d_point_cloud(xyz0)
         pcd1 = make_open3d_point_cloud(xyz1)
-        pcd0 = open3d.voxel_down_sample(pcd0, self.voxel_size)
-        pcd1 = open3d.voxel_down_sample(pcd1, self.voxel_size)
+        pcd0 = pcd0.voxel_down_sample(self.voxel_size)# open3d.voxel_down_sample(pcd0, self.voxel_size)
+        pcd1 = pcd1.voxel_down_sample(self.voxel_size)# pen3d.voxel_down_sample(pcd1, self.voxel_size)
         unaligned_anc_points = np.array(pcd0.points)
         unaligned_pos_points = np.array(pcd1.points)
 
         # Get matches
         # if True:
-        if split == 'train' or split == 'val':
+        if self.split == 'train' or self.split == 'val':
             matching_search_voxel_size = self.matching_search_voxel_size
             matches = get_matching_indices(pcd0, pcd1, trans, matching_search_voxel_size)
-            if len(matches) < 1024:
-                # raise ValueError(f"{drive}, {t0}, {t1}, {len(matches)}/{len(pcd0.points)}")
-                print(f"Not enought corr: {drive}, {t0}, {t1}, {len(matches)}/{len(pcd0.points)}")
-                return (None, None, None, None, None, None, False)
-        else:
-            matches = np.array([])
+            #import pdb; pdb.set_trace()
+            #if len(matches) < 1024:
+            #    # raise ValueError(f"{drive}, {t0}, {t1}, {len(matches)}/{len(pcd0.points)}")
+            #    print(f"Not enought corr: {drive}, {t0}, {t1}, {len(matches)}/{len(pcd0.points)}")
+            #    return (None, None, None, None, None, None, False)
+        #else:
+        #    matches = np.array([])
 
         # align the two point cloud into one corredinate system.
         matches = np.array(matches)
-        pcd0.transform(trans)
-        anc_points = np.array(pcd0.points)
-        pos_points = np.array(pcd1.points)
+        pcd0.transform(trans) 
+        src_points = np.array(pcd0.points) #gt point clouds
+        tgt_points = np.array(pcd1.points)
+        src_pcd = pcd0
+        tgt_pcd = pcd1
 
-        return (anc_points, pos_points, unaligned_anc_points, unaligned_pos_points, matches, trans, True)
+        if len(matches) > self.config.num_node:
+            sel_corr = matches[np.random.choice(len(matches), self.config.num_node, replace=False)]
+        else:
+            sel_corr = matches
+
+        # data augmentation
+        gt_trans = np.eye(4).astype(np.float32)
+        R = rotation_matrix(self.config.augment_axis, self.config.augment_rotation)
+        T = translation_matrix(self.config.augment_translation)
+        gt_trans[0:3, 0:3] = R
+        gt_trans[0:3, 3] = T
+
+        tgt_pcd.transform(gt_trans)
+        src_points = np.array(src_pcd.points)
+        tgt_points = np.array(tgt_pcd.points)
+        src_points += np.random.rand(src_points.shape[0], 3) * self.config.augment_noise
+        tgt_points += np.random.rand(tgt_points.shape[0], 3) * self.config.augment_noise
+        
+        sel_P_src = src_points[sel_corr[:,0], :].astype(np.float32)
+        sel_P_tgt = tgt_points[sel_corr[:,1], :].astype(np.float32)
+        dist_keypts = cdist(sel_P_src, sel_P_src)
+                
+        pts0 = src_points 
+        pts1 = tgt_points
+        feat0 = np.ones_like(pts0[:, :1]).astype(np.float32)
+        feat1 = np.ones_like(pts1[:, :1]).astype(np.float32)
+        if self.config.self_augment:
+            feat0[np.random.choice(pts0.shape[0],int(pts0.shape[0] * 0.99),replace=False)] = 0
+            feat1[np.random.choice(pts1.shape[0],int(pts1.shape[0] * 0.99),replace=False)] = 0
+
+        return pts0, pts1, feat0, feat1, sel_corr, dist_keypts
+
+        #return (anc_points, pos_points, unaligned_anc_points, unaligned_pos_points, matches, trans, True)
 
     def apply_transform(self, pts, trans):
         R = trans[:3, :3]

@@ -82,7 +82,7 @@ class ThreeDMatchDataset(data.Dataset):
             return
 
 
-        import pdb; pdb.set_trace()
+
         for idpair in self.correspondences.keys():
             src = idpair.split("@")[0]
             tgt = idpair.split("@")[1]
@@ -147,7 +147,7 @@ class ThreeDMatchDataset(data.Dataset):
         if self.self_augment:
             feat0[np.random.choice(pts0.shape[0],int(pts0.shape[0] * 0.99),replace=False)] = 0
             feat1[np.random.choice(pts1.shape[0],int(pts1.shape[0] * 0.99),replace=False)] = 0
-        
+
         return pts0, pts1, feat0, feat1, sel_corr, dist_keypts
             
     def __len__(self):

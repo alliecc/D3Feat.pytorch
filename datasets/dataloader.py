@@ -71,7 +71,7 @@ def collate_fn_descriptor(list_data, config, neighborhood_limits):
     batched_features_list = []
     batched_lengths_list = []
     assert len(list_data) == 1
-    
+
     for ind, (pts0, pts1, feat0, feat1, sel_corr, dist_keypts) in enumerate(list_data):
         batched_points_list.append(pts0)
         batched_points_list.append(pts1)

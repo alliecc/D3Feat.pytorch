@@ -85,6 +85,7 @@ class Trainer(object):
             data_timer.toc()
 
             model_timer.tic()
+
             # forward
             self.optimizer.zero_grad()
             features, scores = self.model(inputs)
