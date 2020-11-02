@@ -10,13 +10,14 @@ import copy
 import open3d
 import torch
 from scipy.spatial.distance import cdist
+import csv
 # Dataset parent class
 #from datasets.common import Dataset
 #from datasets.ThreeDMatch import rotate
 
 kitti_icp_cache = {}
 kitti_cache = {}
-
+eps=1e-6
 
 def rotation_matrix(augment_axis, augment_rotation):
     angles = np.random.rand(3) * 2 * np.pi * augment_rotation
@@ -44,6 +45,18 @@ def make_open3d_point_cloud(xyz, color=None):
     if color is not None:
         pcd.colors = open3d.utility.Vector3dVector(color)
     return pcd
+
+
+
+def read_csv_file(path_file):
+    lines = []
+    with open(path_file, "r") as f:
+        reader = csv.reader(f, delimiter="\t")
+        for i, line in enumerate(reader):
+            if i >= 1:
+                lines.append(np.asarray(line[0].split(',')[1:]).astype('float'))
+    return lines
+
 
 
 def make_open3d_feature(data, dim, npts):
@@ -94,6 +107,25 @@ def rotate(points, num_axis=1):
         exit(-1)
     return points
 
+def pred_to_matrix_np(pred):
+
+    cam_T = np.tile(np.eye(4)[np.newaxis,:,:],[pred.shape[0], 1, 1])
+    cam_T[:,0:3, 3] = pred[:, 0:3]
+    s = np.tile(np.linalg.norm(pred[:,3:], axis=1)[:,np.newaxis],[1,4])
+
+    q = pred[:,3:] / (s+eps)
+
+    cam_T[:,0,0] = 1- 2*s[:,0]*(q[:,2]**2 + q[:,3]**2)
+    cam_T[:,0,1] = 2   *s[:,0]*(q[:,1] * q[:,2] - q[:,3] * q[:,0])
+    cam_T[:,0,2] = 2   *s[:,0]*(q[:,1] * q[:,3] + q[:,2] * q[:,0])
+    cam_T[:,1,0] = 2   *s[:,0]*(q[:,1]*q[:,2] + q[:,3]*q[:,0])
+    cam_T[:,1,1] = 1- 2*s[:,0]*(q[:,1]**2 + q[:,3]**2)
+    cam_T[:,1,2] = 2   *s[:,0]*(q[:,2] * q[:,3] - q[:,1] * q[:,0])
+    cam_T[:,2,0] = 2   *s[:,0]*(q[:,1] * q[:,3] - q[:,2] * q[:,0])
+    cam_T[:,2,1] = 2   *s[:,0]*(q[:,2] * q[:,3] + q[:,1] * q[:,0])
+    cam_T[:,2,2] = 1 -2*s[:,0]*(q[:,1]**2 + q[:,2]**2)
+
+    return cam_T
 
 class KITTIMapDataset(torch.utils.data.Dataset):
     AUGMENT = None
@@ -117,12 +149,19 @@ class KITTIMapDataset(torch.utils.data.Dataset):
         self.matching_search_voxel_size = first_subsampling_dl * 1.5
         self.split = split
         # Initiate containers
-        self.anc_points = {'train': [], 'val': [], 'test': []}
+        #self.anc_points = {'train': [], 'val': [], 'test': []}
         self.files = {'train': [], 'val': [], 'test': []}
 
-        self.prepare_kitti_ply(split=split)
         self.config = config
+        
+        # [0] #
+        self.path_map_dict = os.path.join(root, "kitti_map_files_d3feat_%s.pkl" % self.split)
         self.read_map_data()
+
+        self.prepare_kitti_ply()#split=split)
+        
+
+
 
         #if self.load_test:
         #    self.prepare_kitti_ply('test')
@@ -134,25 +173,39 @@ class KITTIMapDataset(torch.utils.data.Dataset):
         return self.num
 
     def read_map_data(self):
+        if os.path.exists(self.path_map_dict):
+            with open(self.path_map_dict, 'rb') as f:
+                self.dict_maps = pickle.load(f)
+            return 
+
 
         subset_names = open(self.DATA_FILES[self.split]).read().split()
         self.dict_maps = {}
         for id_log in subset_names:
-            path_map = os.path.join(self.path_data_root, "kitti_maps_cmr_new", "map-%s_0.05.ply" % (id_log))
+            path_map = os.path.join(self.root, "kitti_maps_cmr_new", "map-%02d_0.05.ply" % (int(id_log)))
             print("Load map : ", path_map)
             pcd = open3d.io.read_point_cloud(path_map)
             pcd = pcd.voxel_down_sample(self.config.first_subsampling_dl)
             pcd, ind = pcd.remove_radius_outlier(nb_points=7, radius=self.config.first_subsampling_dl*2)
+            self.dict_maps[id_log] = torch.Tensor(np.asarray(pcd.points))#.to(self.config.device)
 
 
-            self.dict_maps[id_log] = torch.Tensor(np.asarray(pcd.points)).to(self.config.device)
+        with open(self.path_map_dict, 'wb') as f: 
+            print('Saving map file to ', self.path_map_dict)
+            pickle.dump(self.dict_maps, f)
+            print('Saved!')    
 
+    def get_local_map(self,T_lidar, drive):#, force_select_points=False):
+        dist = torch.sqrt(((self.dict_maps[drive] - T_lidar[0:3,3])**2).sum(axis=1))
+        ind_valid_local = dist < self.config.depth_max
 
+        return self.dict_maps[drive][ind_valid_local]
 
             
-    def prepare_kitti_ply(self, split='train'):
+    def prepare_kitti_ply(self):#, split='train'):
         max_time_diff = self.MAX_TIME_DIFF
-        subset_names = open(self.DATA_FILES[split]).read().split()
+        subset_names = open(self.DATA_FILES[self.split]).read().split()
+        self.all_pos = []
         for dirname in subset_names:
             drive_id = int(dirname)
             fnames = glob.glob(self.root + '/sequences/%02d/velodyne/*.bin' % drive_id)
@@ -160,23 +213,55 @@ class KITTIMapDataset(torch.utils.data.Dataset):
             assert len(fnames) > 0, f"Make sure that the path {self.root} has data {dirname}"
             inames = sorted([int(os.path.split(fname)[-1][:-4]) for fname in fnames])
 
-            all_odo = self.get_video_odometry(drive_id, return_all=True)
-            all_pos = np.array([self.odometry_to_positions(odo) for odo in all_odo])
-            Ts = all_pos[:, :3, 3]
-            pdist = (Ts.reshape(1, -1, 3) - Ts.reshape(-1, 1, 3)) ** 2
-            pdist = np.sqrt(pdist.sum(-1))
-            more_than_10 = pdist > 10
-            curr_time = inames[0]
-            while curr_time in inames:
-                next_time = np.where(more_than_10[curr_time][curr_time:curr_time + 100])[0]
-                if len(next_time) == 0:
-                    curr_time += 1
-                else:
-                    next_time = next_time[0] + curr_time - 1
+            #all_odo = self.get_video_odometry(drive_id, return_all=True)
+            #all_pos = self.allposes #np.array([self.odometry_to_positions(odo) for odo in all_odo])
 
-                if next_time in inames:
-                    self.files[split].append((drive_id, curr_time, next_time))
-                    curr_time = next_time + 1
+            path_poses = os.path.join(self.config.path_cmrdata, self.split, "kitti-%02d.csv" % drive_id)
+            list_gt_poses = read_csv_file(path_poses)
+
+            for i in range(0,len(inames),5):# curr_time in inames:
+                
+
+                T = pred_to_matrix_np(np.asarray(list_gt_poses[i][np.newaxis,[0,1,2,6,3,4,5]]))[0]
+                xyz0 = self.get_local_map(T, dirname)
+
+                #use the local map as the source
+                T = np.linalg.inv(T) 
+                #print(xyz0.shape[0])
+#
+#
+                #xyzr1 = np.fromfile(fnames[i], dtype=np.float32).reshape(-1, 4) 
+                #xyz1 = xyzr1[:, :3]
+                #pcd1 = make_open3d_point_cloud(xyz1)
+                #pcd1.transform( np.linalg.inv(T) )
+                #open3d.io.write_point_cloud("input_%06d.ply" %i , pcd1)
+                #if i ==0:
+                #    open3d.io.write_point_cloud("map_%06d.ply" %i, make_open3d_point_cloud(self.dict_maps[dirname]))
+#
+                #open3d.io.write_point_cloud("local_map_%06d.ply" %i , make_open3d_point_cloud(xyz0))
+                #import pdb; pdb.set_trace()
+
+                if xyz0.shape[0] < self.config.num_min_map_points:
+                    continue
+                
+
+                self.files[self.split].append((drive_id, inames[i]))#, next_time))
+                self.all_pos.append( torch.Tensor(T))#.to(self.config.device))
+            #Ts = self.all_pos[:, :3, 3]
+            #pdist = (Ts.reshape(1, -1, 3) - Ts.reshape(-1, 1, 3)) ** 2
+            #pdist = np.sqrt(pdist.sum(-1))
+            #more_than_10 = pdist > 10
+            #curr_time = inames[0]
+            #while curr_time in inames:
+            #    next_time = np.where(more_than_10[curr_time][curr_time:curr_time + 100])[0]
+            #    if len(next_time) == 0:
+            #        curr_time += 1
+            #    else:
+            #        next_time = next_time[0] + curr_time - 1
+#
+            #    if next_time in inames:
+            #        self.files[split].append((drive_id, curr_time, next_time))
+            #        curr_time = next_time + 1
         # for dirname in subset_names:
         #     drive_id = int(dirname)
         #     inames = self.get_all_scan_ids(drive_id)
@@ -198,16 +283,17 @@ class KITTIMapDataset(torch.utils.data.Dataset):
         #    print("Num_test", self.num)
 #
 
-        self.num = len(self.files[split])
-        for idx in range(len(self.files[split])):
-            drive = self.files[split][idx][0]
-            filename = self._get_velodyne_fn(drive, self.files[split][idx][1])
-            xyzr = np.fromfile(filename, dtype=np.float32).reshape(-1, 4)
-            xyz = xyzr[:, :3]
-            self.anc_points[split] += [xyz]
-
+        self.num = len(self.files[self.split])
+        #for idx in range(len(self.files[split])):
+        #    drive = self.files[split][idx][0]
+        #    filename = self._get_velodyne_fn(drive, self.files[split][idx][1])
+        #    xyzr = np.fromfile(filename, dtype=np.float32).reshape(-1, 4)
+        #    xyz = xyzr[:, :3]
+        #    self.anc_points[split] += [xyz]
+#
     def get_batch_gen(self):#, split, config):
         def random_balanced_gen():
+            import pdb; pdb.set_trace()
             # Initiate concatenation lists
             anc_points_list = []
             pos_points_list = []
@@ -341,60 +427,72 @@ class KITTIMapDataset(torch.utils.data.Dataset):
 #
     def __getitem__(self,idx):# split, idx):
         drive = self.files[self.split][idx][0]
-        t0, t1 = self.files[self.split][idx][1], self.files[self.split][idx][2]
-        all_odometry = self.get_video_odometry(drive, [t0, t1])
-        positions = [self.odometry_to_positions(odometry) for odometry in all_odometry]
-        fname0 = self._get_velodyne_fn(drive, t0)
-        fname1 = self._get_velodyne_fn(drive, t1)
+        #t0, t1 = self.files[self.split][idx][1], self.files[self.split][idx][2]
+
+
+        #LiDAR is the target
+        fname1 = self._get_velodyne_fn(drive,  self.files[self.split][idx][1])
+        xyzr1 = np.fromfile(fname1, dtype=np.float32).reshape(-1, 4) 
+        xyz1 = xyzr1[:, :3]
+        
+        #map is the source
+
+        xyz0 = self.get_local_map( np.linalg.inv(self.all_pos[idx]), str(drive))
+        #all_odometry = self.get_video_odometry(drive, [t0, t1])
+        #positions = [self.odometry_to_positions(odometry) for odometry in all_odometry]
+        #fname0 = self._get_velodyne_fn(drive, t0)
+        #fname1 = self._get_velodyne_fn(drive, t1)
 
         # XYZ and reflectance
-        xyzr0 = np.fromfile(fname0, dtype=np.float32).reshape(-1, 4)
-        xyzr1 = np.fromfile(fname1, dtype=np.float32).reshape(-1, 4)
+        
+       # xyzr1 = np.fromfile(fname1, dtype=np.float32).reshape(-1, 4)
 
-        xyz0 = xyzr0[:, :3]
-        xyz1 = xyzr1[:, :3]
+        #xyz1 = xyzr1[:, :3]
 
-        key = '%d_%d_%d' % (drive, t0, t1)
-        filename = self.icp_path + '/' + key + '.npy'
-        if key not in kitti_icp_cache:
-            if not os.path.exists(filename):
-                if self.IS_ODOMETRY:
-                    M = (self.velo2cam @ positions[0].T @ np.linalg.inv(positions[1].T)
-                         @ np.linalg.inv(self.velo2cam)).T
-                else:
-                    M = self.get_position_transform(positions[0], positions[1], invert=True).T
-                xyz0_t = self.apply_transform(xyz0, M)
-                pcd0 = make_open3d_point_cloud(xyz0_t)
-                pcd1 = make_open3d_point_cloud(xyz1)
-                reg = open3d.registration.registration_icp(pcd0, pcd1, 0.2, np.eye(4),
-                                                           open3d.registration.TransformationEstimationPointToPoint(),
-                                                           open3d.registration.ICPConvergenceCriteria(max_iteration=200))
-                pcd0.transform(reg.transformation)
-                # pcd0.transform(M2) or self.apply_transform(xyz0, M2)
-                M2 = M @ reg.transformation
-                # open3d.draw_geometries([pcd0, pcd1])
-                # write to a file
-                np.save(filename, M2)
-            else:
-                M2 = np.load(filename)
-            kitti_icp_cache[key] = M2
-        else:
-            M2 = kitti_icp_cache[key]
+        #key = '%d_%d_%d' % (drive, t0, t1)
+        #filename = self.icp_path + '/' + key + '.npy'
+        #if key not in kitti_icp_cache:
+        #    if not os.path.exists(filename):
+        #        if self.IS_ODOMETRY:
+        #            M = (self.velo2cam @ positions[0].T @ np.linalg.inv(positions[1].T)
+        #                 @ np.linalg.inv(self.velo2cam)).T
+        #        else:
+        #            M = self.get_position_transform(positions[0], positions[1], invert=True).T
+        #        xyz0_t = self.apply_transform(xyz0, M)
+        #        pcd0 = make_open3d_point_cloud(xyz0_t)
+        #        pcd1 = make_open3d_point_cloud(xyz1)
+        #        reg = open3d.registration.registration_icp(pcd0, pcd1, 0.2, np.eye(4),
+        #                                                   open3d.registration.TransformationEstimationPointToPoint(),
+        #                                                   open3d.registration.ICPConvergenceCriteria(max_iteration=200))
+        #        pcd0.transform(reg.transformation)
+        #        # pcd0.transform(M2) or self.apply_transform(xyz0, M2)
+        #        M2 = M @ reg.transformation
+        #        # open3d.draw_geometries([pcd0, pcd1])
+        #        # write to a file
+        #        np.save(filename, M2)
+        #    else:
+        #        M2 = np.load(filename)
+        #    kitti_icp_cache[key] = M2
+        #else:
+        #    M2 = kitti_icp_cache[key]
+#
+        trans = self.all_pos[idx]# M2
 
-        trans = M2
-
-        pcd0 = make_open3d_point_cloud(xyz0)
+        pcd0 = make_open3d_point_cloud(xyz0)#.cpu().numpy())
         pcd1 = make_open3d_point_cloud(xyz1)
         pcd0 = pcd0.voxel_down_sample(self.voxel_size)# open3d.voxel_down_sample(pcd0, self.voxel_size)
         pcd1 = pcd1.voxel_down_sample(self.voxel_size)# pen3d.voxel_down_sample(pcd1, self.voxel_size)
         unaligned_anc_points = np.array(pcd0.points)
         unaligned_pos_points = np.array(pcd1.points)
 
+        #open3d.io.write_point_cloud("pcd0.ply" , pcd0)
+        #open3d.io.write_point_cloud("pcd1.ply" , pcd1)
+        #import pdb; pdb.set_trace()
         # Get matches
         # if True:
         if self.split == 'train' or self.split == 'val':
             matching_search_voxel_size = self.matching_search_voxel_size
-            matches = get_matching_indices(pcd0, pcd1, trans, matching_search_voxel_size)
+            matches = get_matching_indices(pcd0, pcd1, trans.cpu().numpy(), matching_search_voxel_size)
             #import pdb; pdb.set_trace()
             #if len(matches) < 1024:
             #    # raise ValueError(f"{drive}, {t0}, {t1}, {len(matches)}/{len(pcd0.points)}")
@@ -405,11 +503,17 @@ class KITTIMapDataset(torch.utils.data.Dataset):
 
         # align the two point cloud into one corredinate system.
         matches = np.array(matches)
-        pcd0.transform(trans) 
+        #pcd0.transform(trans) 
+       
+        pcd0.transform(trans.cpu().numpy()) 
         src_points = np.array(pcd0.points) #gt point clouds
         tgt_points = np.array(pcd1.points)
         src_pcd = pcd0
         tgt_pcd = pcd1
+
+        #import pdb; pdb.set_trace()
+        #open3d.io.write_point_cloud("src_pcd.ply" , pcd0)
+        #open3d.io.write_point_cloud("tgt_pcd.ply" , pcd1)
 
         if len(matches) > self.config.num_node:
             sel_corr = matches[np.random.choice(len(matches), self.config.num_node, replace=False)]
@@ -428,7 +532,7 @@ class KITTIMapDataset(torch.utils.data.Dataset):
         tgt_points = np.array(tgt_pcd.points)
         src_points += np.random.rand(src_points.shape[0], 3) * self.config.augment_noise
         tgt_points += np.random.rand(tgt_points.shape[0], 3) * self.config.augment_noise
-        
+
         sel_P_src = src_points[sel_corr[:,0], :].astype(np.float32)
         sel_P_tgt = tgt_points[sel_corr[:,1], :].astype(np.float32)
         dist_keypts = cdist(sel_P_src, sel_P_src)

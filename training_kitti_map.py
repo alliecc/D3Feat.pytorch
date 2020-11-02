@@ -26,8 +26,9 @@ class KITTIConfig:
         ####################
    #     is_test = False
         #gpu_id = 0
-
+        self.depth_max = 50
         self.root = "/home/allie/dataset/kitti_odometry/dataset"
+        self.path_cmrdata = "/home/allie/dataset/cmr_original"
 
         self.dataset = 'KITTIMap'
     
@@ -135,6 +136,8 @@ class KITTIConfig:
         self.saving = True
         self.saving_path = None
     
+
+        self.num_min_map_points = 2e4
         #model = None
         #evaluation_metric = None
         #train_loader = None
