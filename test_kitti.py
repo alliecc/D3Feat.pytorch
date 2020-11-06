@@ -132,20 +132,20 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--chosen_snapshot', default='', type=str, help='snapshot dir')
     parser.add_argument('--inlier_ratio_threshold', default=0.05, type=float)
-    parser.add_argument('--distance_threshold', default=0.10, type=float)
+    parser.add_argument('--distance_threshold', default=0.3, type=float)
     parser.add_argument('--random_points', default=False, action='store_true')
     parser.add_argument('--num_points', default=250, type=int)
     parser.add_argument('--generate_features', default=False, action='store_true')
     args = parser.parse_args()
-    if args.random_points:
-        log_filename = f'geometric_registration/{args.chosen_snapshot}-rand-{args.num_points}.log'
-    else:
-        log_filename = f'geometric_registration/{args.chosen_snapshot}-pred-{args.num_points}.log'
-    logging.basicConfig(level=logging.INFO, 
-        filename=log_filename, 
-        filemode='w', 
-        format="")
-
+    #if args.random_points:
+    #    log_filename = f'geometric_registration/{args.chosen_snapshot}-rand-{args.num_points}.log'
+    #else:
+    #    log_filename = f'geometric_registration/{args.chosen_snapshot}-pred-{args.num_points}.log'
+    #logging.basicConfig(level=logging.INFO, 
+    #    filename=log_filename, 
+    #    filemode='w', 
+    #    format="")
+#
 
     config_path = f'./data/D3Feat/snapshot/{args.chosen_snapshot}/config.json'
     config_default = json.load(open(config_path, 'r'))
@@ -154,6 +154,7 @@ if __name__ == '__main__':
     from training_kitti_map import KITTIConfig, ConfigObj
     kitti_config = KITTIConfig()
     config = {}
+    config.update(vars(args))
     config.update(config_default)
     config.update(kitti_config.__dict__)
     config = ConfigObj(config)
@@ -197,11 +198,12 @@ if __name__ == '__main__':
 
 
     if args.generate_features:
-        dset = ThreeDMatchTestset(root=config.root,
-                            downsample=config.downsample,
-                            config=config,
-                            last_scene=False,
-                        )
+        dset = KITTIMapDataset(root=config.root, split='test',config=config)
+        #dset = ThreeDMatchTestset(root=config.root,
+        #                    downsample=config.downsample,
+        #                    config=config,
+        #                    last_scene=False,
+        #                )
         dloader, _ = get_dataloader(dataset=dset,
                                     batch_size=config.batch_size,
                                     shuffle=False,
@@ -209,6 +211,8 @@ if __name__ == '__main__':
                                     )
         generate_features(model.cuda(), dloader, config, args.chosen_snapshot)
 
+
+    test_kitti(model, dset)
     # register each pair of fragments in scenes using multiprocessing.
     #scene_list = [
     #    '7-scenes-redkitchen',
@@ -220,23 +224,153 @@ if __name__ == '__main__':
     #    'sun3d-mit_76_studyroom-76-1studyroom2',
     #    'sun3d-mit_lab_hj-lab_hj_tea_nov_2_2012_scan1_erika'
     #]
-    return_dict = Manager().dict()
-    # register_one_scene(args.inlier_ratio_threshold, args.distance_threshold, save_path, return_dict, scene_list[0])
-    jobs = []
-    for scene in scene_list:
-        p = Process(target=register_one_scene, args=(args.inlier_ratio_threshold, args.distance_threshold, save_path, return_dict, scene))
-        jobs.append(p)
-        p.start()
-    
-    for proc in jobs:
-        proc.join()
+    #return_dict = Manager().dict()
+    ## register_one_scene(args.inlier_ratio_threshold, args.distance_threshold, save_path, return_dict, scene_list[0])
+    #jobs = []
+    #for scene in scene_list:
+    #    p = Process(target=register_one_scene, args=(args.inlier_ratio_threshold, args.distance_threshold, save_path, return_dict, scene))
+    #    jobs.append(p)
+    #    p.start()
+    #
+    #for proc in jobs:
+    #    proc.join()
+#
+    #recalls = [v[0] for k, v in return_dict.items()]
+    #inlier_nums = [v[1] for k, v in return_dict.items()]
+    #inlier_ratios = [v[2] for k, v in return_dict.items()]
+#
+    #logging.info("*" * 40)
+    #logging.info(recalls)
+    #logging.info(f"All 8 scene, average recall: {np.mean(recalls):.2f}%")
+    #logging.info(f"All 8 scene, average num inliers: {np.mean(inlier_nums):.2f}")
+    #logging.info(f"All 8 scene, average num inliers ratio: {np.mean(inlier_ratios)*100:.2f}%")
 
-    recalls = [v[0] for k, v in return_dict.items()]
-    inlier_nums = [v[1] for k, v in return_dict.items()]
-    inlier_ratios = [v[2] for k, v in return_dict.items()]
 
-    logging.info("*" * 40)
-    logging.info(recalls)
-    logging.info(f"All 8 scene, average recall: {np.mean(recalls):.2f}%")
-    logging.info(f"All 8 scene, average num inliers: {np.mean(inlier_nums):.2f}")
-    logging.info(f"All 8 scene, average num inliers ratio: {np.mean(inlier_ratios)*100:.2f}%")
+
+    def test_kitti(model, dataset, config):
+        #self.sess.run(dataset.test_init_op)
+
+        use_random_points = False
+        if use_random_points:
+            num_keypts = 5000
+            #icp_save_path = f'geometric_registration_kitti/D3Feat_{self.experiment_str}-rand{num_keypts}'
+        else:
+            num_keypts = 250
+            #icp_save_path = f'geometric_registration_kitti/D3Feat_{self.experiment_str}-pred{num_keypts}'
+        if not exists(icp_save_path):
+            makedirs(icp_save_path)
+
+        ch = logging.StreamHandler(sys.stdout)
+        logging.getLogger().setLevel(logging.INFO)
+        logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%m/%d %H:%M:%S', handlers=[ch])
+
+        success_meter, loss_meter, rte_meter, rre_meter = AverageMeter(), AverageMeter(), AverageMeter(), AverageMeter()
+        feat_timer, reg_timer = Timer(), Timer()
+
+        for i in range(dataset.num_test):
+            feat_timer.tic()
+            ops = [model.anchor_inputs, model.out_features, model.out_scores, model.anc_id, model.pos_id, model.accuracy]
+            [inputs, features, scores, anc_id, pos_id, accuracy] = self.sess.run(ops, {model.dropout_prob: 1.0})
+            feat_timer.toc()
+            # print(accuracy, anc_id)
+            import pdb; pdb.set_trace()
+
+            stack_lengths = inputs['stack_lengths']
+            first_pcd_indices = np.arange(stack_lengths[0])
+            second_pcd_indices = np.arange(stack_lengths[1]) + stack_lengths[0]
+            # anc_points = inputs['points'][0][first_pcd_indices]
+            # pos_points = inputs['points'][0][second_pcd_indices]
+            # anc_features = features[first_pcd_indices]
+            # pos_features = features[second_pcd_indices]
+            # anc_scores = scores[first_pcd_indices]
+            # pos_scores = scores[second_pcd_indices]
+            if use_random_points:
+                anc_keypoints_id = np.random.choice(stack_lengths[0], num_keypts)
+                pos_keypoints_id = np.random.choice(stack_lengths[1], num_keypts) + stack_lengths[0]
+                anc_points = inputs['points'][0][anc_keypoints_id]
+                pos_points = inputs['points'][0][pos_keypoints_id]
+                anc_features = features[anc_keypoints_id]
+                pos_features = features[pos_keypoints_id]
+                anc_scores = scores[anc_keypoints_id]
+                pos_scores = scores[pos_keypoints_id]
+            else:
+                scores_anc_pcd = scores[first_pcd_indices]
+                scores_pos_pcd = scores[second_pcd_indices]
+                anc_keypoints_id = np.argsort(scores_anc_pcd, axis=0)[-num_keypts:].squeeze()
+                pos_keypoints_id = np.argsort(scores_pos_pcd, axis=0)[-num_keypts:].squeeze() + stack_lengths[0]
+                anc_points = inputs['points'][0][anc_keypoints_id]
+                anc_features = features[anc_keypoints_id]
+                anc_scores = scores[anc_keypoints_id]
+                pos_points = inputs['points'][0][pos_keypoints_id]
+                pos_features = features[pos_keypoints_id]
+                pos_scores = scores[pos_keypoints_id]
+
+            pcd0 = make_open3d_point_cloud(anc_points)
+            pcd1 = make_open3d_point_cloud(pos_points)
+            feat0 = make_open3d_feature(anc_features, 32, anc_features.shape[0])
+            feat1 = make_open3d_feature(pos_features, 32, pos_features.shape[0])
+
+            reg_timer.tic()
+            filename = anc_id.decode("utf-8") + "-" + pos_id.decode("utf-8").split("@")[-1] + '.npz'
+            if os.path.exists(join(icp_save_path, filename)):
+                data = np.load(join(icp_save_path, filename))
+                T_ransac = data['trans']
+                print(f"Read from {join(icp_save_path, filename)}")
+            else:
+
+                distance_threshold = dataset.voxel_size * 1.0
+                ransac_result = open3d.registration.registration_ransac_based_on_feature_matching(
+                    pcd0, pcd1, feat0, feat1, distance_threshold,
+                    open3d.registration.TransformationEstimationPointToPoint(False), 4, [
+                        open3d.registration.CorrespondenceCheckerBasedOnEdgeLength(0.9),
+                        open3d.registration.CorrespondenceCheckerBasedOnDistance(distance_threshold)
+                    ],
+                    open3d.registration.RANSACConvergenceCriteria(50000, 1000)
+                    # open3d.registration.RANSACConvergenceCriteria(4000000, 10000)
+                )
+                # print(ransac_result)
+                T_ransac = ransac_result.transformation.astype(np.float32)
+                np.savez(join(icp_save_path, filename),
+                         trans=T_ransac,
+                         anc_pts=anc_points,
+                         pos_pts=pos_points,
+                         anc_scores=anc_scores,
+                         pos_scores=pos_scores
+                         )
+            reg_timer.toc()
+
+            T_gth = inputs['trans']
+            # loss_ransac = corr_dist(T_ransac, T_gth, anc_points, pos_points, weight=None, max_dist=1)
+            loss_ransac = 0
+            rte = np.linalg.norm(T_ransac[:3, 3] - T_gth[:3, 3])
+            rre = np.arccos((np.trace(T_ransac[:3, :3].transpose() @ T_gth[:3, :3]) - 1) / 2)
+
+            if rte < 2:
+                rte_meter.update(rte)
+
+            if not np.isnan(rre) and rre < np.pi / 180 * 5:
+                rre_meter.update(rre * 180 / np.pi)
+
+            if rte < 2 and not np.isnan(rre) and rre < np.pi / 180 * 5:
+                success_meter.update(1)
+            else:
+                success_meter.update(0)
+                logging.info(f"{anc_id} Failed with RTE: {rte}, RRE: {rre * 180 / np.pi}")
+
+            loss_meter.update(loss_ransac)
+
+            if (i + 1) % 10 == 0:
+                logging.info(
+                    f"{i+1} / {dataset.num_test}: Feat time: {feat_timer.avg}," +
+                    f" Reg time: {reg_timer.avg}, Loss: {loss_meter.avg}, RTE: {rte_meter.avg}," +
+                    f" RRE: {rre_meter.avg}, Success: {success_meter.sum} / {success_meter.count}" +
+                    f" ({success_meter.avg * 100} %)"
+                )
+                feat_timer.reset()
+                reg_timer.reset()
+
+        logging.info(
+            f"Total loss: {loss_meter.avg}, RTE: {rte_meter.avg}, var: {rte_meter.var}," +
+            f" RRE: {rre_meter.avg}, var: {rre_meter.var}, Success: {success_meter.sum} " +
+            f"/ {success_meter.count} ({success_meter.avg * 100} %)"
+        )
