@@ -11,6 +11,7 @@ import open3d
 import torch
 from scipy.spatial.distance import cdist
 import csv
+from ext.benchmark.datasets.datasets import PairwiseDataset
 # Dataset parent class
 #from datasets.common import Dataset
 #from datasets.ThreeDMatch import rotate
@@ -127,7 +128,41 @@ def pred_to_matrix_np(pred):
 
     return cam_T
 
-class KITTIMapDataset(torch.utils.data.Dataset):
+
+class KITTIMapDataset(PairwiseDataset):
+    AUGMENT = None
+    DATA_FILES = {
+        'train': 'kitti/train_kitti.txt', #log ids
+        'val': 'kitti/val_kitti.txt',
+        'test': 'kitti/test_kitti.txt'
+    }
+    TEST_RANDOM_ROTATION = False
+    IS_ODOMETRY = True
+    MAX_TIME_DIFF = 3
+
+    def __init__(self, split, cfg, config_d3feat, input_threads=8, first_subsampling_dl=0.30):
+        super().__init__(split, cfg)
+        self.network_model = 'descriptor'
+        self.num_threads = input_threads
+        self.root = root
+        self.icp_path = "data"#'data/kitti/icp'
+        self.voxel_size = first_subsampling_dl
+        self.matching_search_voxel_size = first_subsampling_dl * 0.5#1.5
+        self.split = split
+        # Initiate containers
+        #self.anc_points = {'train': [], 'val': [], 'test': []}
+        self.files = {'train': [], 'val': [], 'test': []}
+
+        self.config = config
+        
+        # [0] #
+        self.path_map_dict = os.path.join(root, "kitti_map_files_d3feat_%s.pkl" % self.split)
+
+    
+
+
+class KITTIMapDatasetOld(torch.utils.data.Dataset):
+
     AUGMENT = None
     DATA_FILES = {
         'train': 'kitti/train_kitti.txt', #log ids
@@ -156,21 +191,77 @@ class KITTIMapDataset(torch.utils.data.Dataset):
         
         # [0] #
         self.path_map_dict = os.path.join(root, "kitti_map_files_d3feat_%s.pkl" % self.split)
-        self.read_map_data()
+        self.read_data()
 
-        self.prepare_kitti_ply()#split=split)
+        #self.prepare_kitti_ply()#split=split)
         
 
 
+    def read_data(self):
+        self.load_map_data()
 
-        #if self.load_test:
-        #    self.prepare_kitti_ply('test')
-        #else:
-        #    self.prepare_kitti_ply(split='train')
-        #    self.prepare_kitti_ply(split='val')
+        
+        
+        num_logs = len(self.cfg.dict_log_ids[self.split])
+    
+        
+        self.data = {}
+        self.data["id_log"] = []
+        self.data["ind_frame"] = []
+        self.data["raw_points"] = []
+        self.data["T_map"] = []
+        self.data["path_raw_points"] = []
+    
+        for ind_log, id_log in enumerate(self.cfg.dict_log_ids[self.split]):
+            path_frames = glob.glob(os.path.join(
+                self.cfg.path_dataset, "sequences", id_log, "velodyne/*"))
+            path_frames.sort()
+            num_frames = len(path_frames)
+            print("Reading %s frames from %s: %d/%d " %
+                  (num_frames, self.cfg.path_dataset, ind_log, num_logs))
+    
+            data_odometry = pykitti.odometry(self.cfg.path_dataset, id_log)
+            path_poses = os.path.join(
+                self.cfg.path_cmrdata, self.split, "kitti-%s.csv" % id_log)
+            list_gt_poses = read_csv_file(path_poses)
+    
+            sample_interval = 10 if self.split == "test" else self.cfg.trainging_set_step
+    
+            for ind_frame in range(0, num_frames, sample_interval):
+    
+                path_raw_points = os.path.join(
+                    self.cfg.path_dataset, "sequences", id_log, "velodyne/%06d.bin" % ind_frame)
+                T_map = pred_to_matrix_np(
+                    list_gt_poses[ind_frame][np.newaxis, [0, 1, 2, 6, 3, 4, 5]])[0]
+    
+                points_local_map = self.get_local_map(T_map, id_log)
+    
+                if points_local_map.shape[0] < self.cfg.min_num_pts_map:
+                    continue
+    
+                # raw_points = pykitti.utils.load_velo_scan(path_raw_points)[:,0:3]
+                # raw_points = raw_points[np.random.permutation(raw_points.shape[0])]
+    
+                self.data["id_log"].append(id_log)
+                self.data["ind_frame"].append(ind_frame)
+                self.data["T_map"].append(T_map)
+                self.data["path_raw_points"].append(path_raw_points)
+    
+        self.length = len(self.data["id_log"])
+        
+        if self.split == "test":
+            self.read_list_T_gt()
+            print("Loading test samples...")
+            self.list_test_sample = []
+            for i in range(self.length):
+                T_noise = self.list_T_gt[i]
+                self.list_test_sample.append(self.get_sample(i,T_noise))
+
+
+        print(f"num of samples = {self.length}")
 
     def __len__(self):
-        return self.num
+        return self.length
 
     def read_map_data(self):
         if os.path.exists(self.path_map_dict):

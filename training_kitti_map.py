@@ -227,8 +227,9 @@ if __name__ == '__main__':
     )
     
     # create dataset and dataloader
-
-    train_set = KITTIMapDataset(root=config.root, split='train',config=config)
+    cfg = importlib.import_module("configs.config")
+    train_set = KITTIMapDataset("train", cfg, config_d3feat=config)
+ #root=config.root,split='train',config=config)
                                         #downsample=config.downsample,
                                         #self_augment=config.self_augment,
                                         #num_node=config.num_node,
@@ -238,7 +239,7 @@ if __name__ == '__main__':
                                         #augment_translation=config.augment_translation,
                                         #,
                                         #)
-    val_set = KITTIMapDataset(root=config.root, split='val',config=config)
+    val_set = KITTIMapDataset("val", cfg, config_d3feat=config
 
                                     #(root=config.root,
                                     #split='val',
