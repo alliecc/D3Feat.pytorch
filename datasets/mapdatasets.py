@@ -140,8 +140,9 @@ class KITTIMapDataset(PairwiseDataset):
     IS_ODOMETRY = True
     MAX_TIME_DIFF = 3
 
-    def __init__(self, split, cfg, config_d3feat, input_threads=8, first_subsampling_dl=0.30):
-        super().__init__(split, cfg)
+    def __init__(self,  split, cfg, config_d3feat, root, input_threads=8,
+       first_subsampling_dl=0.30):
+        #super().__init__(split, cfg)
         self.network_model = 'descriptor'
         self.num_threads = input_threads
         self.root = root
@@ -151,14 +152,98 @@ class KITTIMapDataset(PairwiseDataset):
         self.split = split
         # Initiate containers
         #self.anc_points = {'train': [], 'val': [], 'test': []}
-        self.files = {'train': [], 'val': [], 'test': []}
+        #self.files = {'train': [], 'val': [], 'test': []}
 
-        self.config = config
+        self.config = config_d3feat
         
-        # [0] #
         self.path_map_dict = os.path.join(root, "kitti_map_files_d3feat_%s.pkl" % self.split)
 
-    
+        #to match the dataset file used in the benchmark
+        self.split = split
+        self.cfg = cfg
+
+        self.read_data()
+    def __len__(self):
+        return self.length
+
+
+    def __getitem__(self,idx):# split, idx):
+        drive = self.data["id_log"][idx]#self.files[self.split][idx][0]
+        #t0, t1 = self.files[self.split][idx][1], self.files[self.split][idx][2]
+
+
+        #LiDAR is the target
+        #fname1 = self._get_velodyne_fn(drive,  self.files[self.split][idx][1])
+        #xyzr1 = np.fromfile(fname1, dtype=np.float32).reshape(-1, 4) 
+        #xyz1 = xyzr1[:, :3]
+
+
+        xyz1 = self.load_kitti_scan(idx)
+        #map is the source
+        xyz0 = self.get_local_map( self.data["T_map"][idx], str(drive))
+
+        trans = torch.Tensor(np.linalg.inv(self.data["T_map"][idx]))#.to(self.config.device)# # M2
+
+        #pcd0 = make_open3d_point_cloud(xyz0)#.cpu().numpy())
+        #pcd1 = make_open3d_point_cloud(xyz1)
+        #pcd0 = pcd0.voxel_down_sample(self.voxel_size)# open3d.voxel_down_sample(pcd0, self.voxel_size)
+        #pcd1 = pcd1.voxel_down_sample(self.voxel_size)# pen3d.voxel_down_sample(pcd1, self.voxel_size)
+        unaligned_anc_points = xyz0#np.array(pcd0.points)
+        unaligned_pos_points = xyz1#np.array(pcd1.points)
+
+        if self.split == 'train' or self.split == 'val':
+
+            pcd0 = make_open3d_point_cloud(xyz0)#.cpu().numpy())
+            pcd1 = make_open3d_point_cloud(xyz1)
+            matching_search_voxel_size = self.matching_search_voxel_size
+            matches = get_matching_indices(pcd0, pcd1, trans.cpu().numpy(), matching_search_voxel_size)
+
+        # align the two point cloud into one corredinate system.
+        matches = np.array(matches)
+        #pcd0.transform(trans) 
+       
+        pcd0.transform(trans.cpu().numpy()) 
+        src_points = np.array(pcd0.points) #gt point clouds
+        tgt_points = np.array(pcd1.points)
+        src_pcd = pcd0
+        tgt_pcd = pcd1
+
+
+        #open3d.io.write_point_cloud("src_pcd.ply" , pcd0)
+        #open3d.io.write_point_cloud("tgt_pcd.ply" , pcd1)
+        #import pdb; pdb.set_trace()
+
+        if len(matches) > self.config.num_node:
+            sel_corr = matches[np.random.choice(len(matches), self.config.num_node, replace=False)]
+        else:
+            sel_corr = matches
+
+        # data augmentation
+        gt_trans = np.eye(4).astype(np.float32)
+        R = rotation_matrix(self.config.augment_axis, self.config.augment_rotation)
+        T = translation_matrix(self.config.augment_translation)
+        gt_trans[0:3, 0:3] = R
+        gt_trans[0:3, 3] = T
+
+        tgt_pcd.transform(gt_trans)
+        src_points = np.array(src_pcd.points)
+        tgt_points = np.array(tgt_pcd.points)
+        src_points += np.random.rand(src_points.shape[0], 3) * self.config.augment_noise
+        tgt_points += np.random.rand(tgt_points.shape[0], 3) * self.config.augment_noise
+
+        sel_P_src = src_points[sel_corr[:,0], :].astype(np.float32)
+        sel_P_tgt = tgt_points[sel_corr[:,1], :].astype(np.float32)
+        dist_keypts = cdist(sel_P_src, sel_P_src)
+                
+        pts0 = src_points 
+        pts1 = tgt_points
+        feat0 = np.ones_like(pts0[:, :1]).astype(np.float32)
+        feat1 = np.ones_like(pts1[:, :1]).astype(np.float32)
+        if self.config.self_augment:
+            feat0[np.random.choice(pts0.shape[0],int(pts0.shape[0] * 0.99),replace=False)] = 0
+            feat1[np.random.choice(pts1.shape[0],int(pts1.shape[0] * 0.99),replace=False)] = 0
+
+        return pts0, pts1, feat0, feat1, sel_corr, dist_keypts
 
 
 class KITTIMapDatasetOld(torch.utils.data.Dataset):

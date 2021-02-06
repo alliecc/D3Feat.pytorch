@@ -82,7 +82,7 @@ data_arg.add_argument('--augment_axis', type=int, default=1)
 data_arg.add_argument('--augment_rotation', type=float, default=1.0, help='rotation angle = num * 2pi') 
 data_arg.add_argument('--augment_translation', type=float, default=0.5, help='translation = num (m)')
 data_arg.add_argument('--batch_size', type=int, default=1)
-data_arg.add_argument('--num_workers', type=int, default=16)
+data_arg.add_argument('--num_workers', type=int, default=4)
 
 # Other configurations
 misc_arg = add_argument_group('Misc')

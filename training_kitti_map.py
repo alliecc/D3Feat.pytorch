@@ -13,7 +13,9 @@ from utils.loss import ContrastiveLoss, CircleLoss, DetLoss
 from torch import optim
 from torch import nn
 import torch
-
+import sys
+import importlib
+sys.path.append("ext/benchmark")
 
 class KITTIConfig:
     def __init__(self):
@@ -228,18 +230,17 @@ if __name__ == '__main__':
     
     # create dataset and dataloader
     cfg = importlib.import_module("configs.config")
-    train_set = KITTIMapDataset("train", cfg, config_d3feat=config)
- #root=config.root,split='train',config=config)
+    train_set = KITTIMapDataset("train", cfg,
+        config_d3feat=config, root=config.root)#, config=config,
                                         #downsample=config.downsample,
                                         #self_augment=config.self_augment,
                                         #num_node=config.num_node,
                                         #augment_noise=config.augment_noise,
                                         #augment_axis=config.augment_axis, 
                                         #augment_rotation=config.augment_rotation,
-                                        #augment_translation=config.augment_translation,
-                                        #,
-                                        #)
-    val_set = KITTIMapDataset("val", cfg, config_d3feat=config
+                                        #augment_translation=config.augment_translation,)
+    val_set = KITTIMapDataset("val", cfg, config_d3feat=config,
+        root=config.root)
 
                                     #(root=config.root,
                                     #split='val',
