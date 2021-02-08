@@ -180,7 +180,7 @@ class KITTIMapDataset(PairwiseDataset):
 
         xyz1 = self.load_kitti_scan(idx)
         #map is the source
-        xyz0 = self.get_local_map( self.data["T_map"][idx], str(drive))
+        xyz0 = self.get_local_map( self.data["T_map"][idx],self.data["T_map"][idx], str(drive))
 
         trans = torch.Tensor(np.linalg.inv(self.data["T_map"][idx]))#.to(self.config.device)# # M2
 
@@ -319,7 +319,7 @@ class KITTIMapDatasetOld(torch.utils.data.Dataset):
                 T_map = pred_to_matrix_np(
                     list_gt_poses[ind_frame][np.newaxis, [0, 1, 2, 6, 3, 4, 5]])[0]
     
-                points_local_map = self.get_local_map(T_map, id_log)
+                points_local_map = self.get_local_map(T_map,T_map,  id_log)
     
                 if points_local_map.shape[0] < self.cfg.min_num_pts_map:
                     continue

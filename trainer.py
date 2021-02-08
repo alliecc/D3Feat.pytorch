@@ -46,6 +46,7 @@ class Trainer(object):
             self.train_epoch(epoch + 1)
 
             if (epoch + 1) % 1 == 0:
+                print("start evaluation...")
                 res = self.evaluate(epoch + 1)
                 if res['desc_loss'] < self.best_loss:
                     self.best_loss = res['desc_loss']
