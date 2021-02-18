@@ -229,7 +229,7 @@ if __name__ == '__main__':
     )
 
     # create dataset and dataloader
-    cfg = importlib.import_module("configs.config")
+    cfg = importlib.import_module("ext.benchmark_tools.configs.config_bb10")
     train_set = ArgoverseMapDataset("train", cfg,
                                 config_d3feat=config, root=config.root)  # , config=config,
     # downsample=config.downsample,
@@ -239,7 +239,7 @@ if __name__ == '__main__':
     # augment_axis=config.augment_axis,
     # augment_rotation=config.augment_rotation,
     # augment_translation=config.augment_translation,)
-    val_set = ArgoverseMapDataset("val", cfg, config_d3feat=config,
+    val_set = ArgoverseMapDataset("test", cfg, config_d3feat=config,
                               root=config.root)
 
     # (root=config.root,

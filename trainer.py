@@ -92,8 +92,7 @@ class Trainer(object):
 
             # forward
             self.optimizer.zero_grad()
-            import pdb
-            pdb.set_trace()
+
             features, scores = self.model(inputs)
             anc_features = features[inputs["corr"][:, 0].long()]
             pos_features = features[inputs["corr"]
