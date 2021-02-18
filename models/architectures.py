@@ -47,10 +47,14 @@ def p2p_fitting_regularizer(net):
 
             # Point should not be close to each other
             for i in range(net.K):
-                other_KP = torch.cat([KP_locs[:, :i, :], KP_locs[:, i + 1:, :]], dim=1).detach()
-                distances = torch.sqrt(torch.sum((other_KP - KP_locs[:, i:i + 1, :]) ** 2, dim=2))
-                rep_loss = torch.sum(torch.clamp_max(distances - net.repulse_extent, max=0.0) ** 2, dim=1)
-                repulsive_loss += net.l1(rep_loss, torch.zeros_like(rep_loss)) / net.K
+                other_KP = torch.cat(
+                    [KP_locs[:, :i, :], KP_locs[:, i + 1:, :]], dim=1).detach()
+                distances = torch.sqrt(
+                    torch.sum((other_KP - KP_locs[:, i:i + 1, :]) ** 2, dim=2))
+                rep_loss = torch.sum(torch.clamp_max(
+                    distances - net.repulse_extent, max=0.0) ** 2, dim=1)
+                repulsive_loss += net.l1(rep_loss,
+                                         torch.zeros_like(rep_loss)) / net.K
 
     return net.deform_fitting_power * (2 * fitting_loss + repulsive_loss)
 
@@ -83,7 +87,8 @@ class KPCNN(nn.Module):
 
             # Check equivariance
             if ('equivariant' in block) and (not out_dim % 3 == 0):
-                raise ValueError('Equivariant block but features dimension is not a factor of 3')
+                raise ValueError(
+                    'Equivariant block but features dimension is not a factor of 3')
 
             # Detect upsampling block to stop
             if 'upsample' in block:
@@ -97,7 +102,6 @@ class KPCNN(nn.Module):
                                                 layer,
                                                 config))
 
-
             # Index of block in this layer
             block_in_layer += 1
 
@@ -106,7 +110,6 @@ class KPCNN(nn.Module):
                 in_dim = out_dim // 2
             else:
                 in_dim = out_dim
-
 
             # Detect change to a subsampled layer
             if 'pool' in block or 'strided' in block:
@@ -166,7 +169,8 @@ class KPCNN(nn.Module):
         elif self.deform_fitting_mode == 'point2plane':
             raise ValueError('point2plane fitting mode not implemented yet.')
         else:
-            raise ValueError('Unknown fitting mode: ' + self.deform_fitting_mode)
+            raise ValueError('Unknown fitting mode: ' +
+                             self.deform_fitting_mode)
 
         # Combined loss
         return self.output_loss + self.reg_loss
@@ -220,7 +224,8 @@ class KPFCNN(nn.Module):
 
             # Check equivariance
             if ('equivariant' in block) and (not out_dim % 3 == 0):
-                raise ValueError('Equivariant block but features dimension is not a factor of 3')
+                raise ValueError(
+                    'Equivariant block but features dimension is not a factor of 3')
 
             # Detect change to next layer for skip connection
             if np.any([tmp in block for tmp in ['pool', 'strided', 'upsample', 'global']]):
@@ -233,11 +238,11 @@ class KPFCNN(nn.Module):
 
             # Apply the good block function defining tf ops
             self.encoder_blocks.append(block_decider(block,
-                                                    r,
-                                                    in_dim,
-                                                    out_dim,
-                                                    layer,
-                                                    config))
+                                                     r,
+                                                     in_dim,
+                                                     out_dim,
+                                                     layer,
+                                                     config))
 
             # Update dimension of input from output
             if 'simple' in block:
@@ -277,11 +282,11 @@ class KPFCNN(nn.Module):
 
             # Apply the good block function defining tf ops
             self.decoder_blocks.append(block_decider(block,
-                                                    r,
-                                                    in_dim,
-                                                    out_dim,
-                                                    layer,
-                                                    config))
+                                                     r,
+                                                     in_dim,
+                                                     out_dim,
+                                                     layer,
+                                                     config))
 
             # Update dimension of input from output
             in_dim = out_dim
@@ -299,7 +304,9 @@ class KPFCNN(nn.Module):
     def forward(self, batch):
 
         # Get input features
-        
+        import pdb
+        pdb.set_trace()
+
         x = batch['features'].clone().detach()
 
         # Loop over consecutive blocks
@@ -324,12 +331,14 @@ class KPFCNN(nn.Module):
         first_pcd_length, second_pcd_length = inputs['stack_lengths'][0]
 
         first_pcd_indices = torch.arange(first_pcd_length)
-        second_pcd_indices = torch.arange(first_pcd_length, first_pcd_length+second_pcd_length)
+        second_pcd_indices = torch.arange(
+            first_pcd_length, first_pcd_length+second_pcd_length)
 
         # add a fake point in the last row for shadow neighbors
         shadow_features = torch.zeros_like(features[:1, :])
         features = torch.cat([features, shadow_features], dim=0)
-        shadow_neighbor = torch.ones_like(neighbor[:1, :]) * (first_pcd_length + second_pcd_length)
+        shadow_neighbor = torch.ones_like(
+            neighbor[:1, :]) * (first_pcd_length + second_pcd_length)
         neighbor = torch.cat([neighbor, shadow_neighbor], dim=0)
 
         # #  normalize the feature to avoid overflow
@@ -342,20 +351,28 @@ class KPFCNN(nn.Module):
         features = features / (torch.max(features) + 1e-6)
 
         # local max score (saliency score)
-        neighbor_features = features[neighbor, :] # [n_points, n_neighbors, 64]
-        neighbor_features_sum = torch.sum(neighbor_features, dim=-1)  # [n_points, n_neighbors]
-        neighbor_num = (neighbor_features_sum != 0).sum(dim=-1, keepdims=True)  # [n_points, 1]
+        # [n_points, n_neighbors, 64]
+        neighbor_features = features[neighbor, :]
+        neighbor_features_sum = torch.sum(
+            neighbor_features, dim=-1)  # [n_points, n_neighbors]
+        neighbor_num = (neighbor_features_sum != 0).sum(
+            dim=-1, keepdims=True)  # [n_points, 1]
         neighbor_num = torch.max(neighbor_num, torch.ones_like(neighbor_num))
-        mean_features = torch.sum(neighbor_features, dim=1) / neighbor_num  # [n_points, 64]
-        local_max_score = F.softplus(features - mean_features)  # [n_points, 64]
+        mean_features = torch.sum(
+            neighbor_features, dim=1) / neighbor_num  # [n_points, 64]
+        local_max_score = F.softplus(
+            features - mean_features)  # [n_points, 64]
 
         # calculate the depth-wise max score
-        depth_wise_max = torch.max(features, dim=1, keepdims=True)[0]  # [n_points, 1]
-        depth_wise_max_score = features / (1e-6 + depth_wise_max)  # [n_points, 64]
+        depth_wise_max = torch.max(features, dim=1, keepdims=True)[
+            0]  # [n_points, 1]
+        depth_wise_max_score = features / \
+            (1e-6 + depth_wise_max)  # [n_points, 64]
 
         all_scores = local_max_score * depth_wise_max_score
-        # use the max score among channel to be the score of a single point. 
-        scores = torch.max(all_scores, dim=1, keepdims=True)[0]  # [n_points, 1]
+        # use the max score among channel to be the score of a single point.
+        scores = torch.max(all_scores, dim=1, keepdims=True)[
+            0]  # [n_points, 1]
 
         # hard selection (used during test)
         if self.training is False:
@@ -366,20 +383,3 @@ class KPFCNN(nn.Module):
             scores = scores * detected
 
         return scores[:-1, :]
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

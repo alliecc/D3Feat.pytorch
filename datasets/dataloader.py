@@ -41,13 +41,14 @@ def batch_grid_subsampling_kpconv(points, batches_len, features=None, labels=Non
 
     else:
         s_points, s_len, s_features, s_labels = cpp_subsampling.subsample_batch(points,
-                                                                              batches_len,
-                                                                              features=features,
-                                                                              classes=labels,
-                                                                              sampleDl=sampleDl,
-                                                                              max_p=max_p,
-                                                                              verbose=verbose)
+                                                                                batches_len,
+                                                                                features=features,
+                                                                                classes=labels,
+                                                                                sampleDl=sampleDl,
+                                                                                max_p=max_p,
+                                                                                verbose=verbose)
         return torch.from_numpy(s_points), torch.from_numpy(s_len), torch.from_numpy(s_features), torch.from_numpy(s_labels)
+
 
 def batch_neighbors_kpconv(queries, supports, q_batches, s_batches, radius, max_neighbors):
     """
@@ -60,12 +61,14 @@ def batch_neighbors_kpconv(queries, supports, q_batches, s_batches, radius, max_
     :return: neighbors indices
     """
 
-    neighbors = cpp_neighbors.batch_query(queries, supports, q_batches, s_batches, radius=radius)
+    neighbors = cpp_neighbors.batch_query(
+        queries, supports, q_batches, s_batches, radius=radius)
     if max_neighbors > 0:
         return torch.from_numpy(neighbors[:, :max_neighbors])
     else:
         return torch.from_numpy(neighbors)
-    
+
+
 def collate_fn_descriptor(list_data, config, neighborhood_limits):
     batched_points_list = []
     batched_features_list = []
@@ -79,9 +82,11 @@ def collate_fn_descriptor(list_data, config, neighborhood_limits):
         batched_features_list.append(feat1)
         batched_lengths_list.append(len(pts0))
         batched_lengths_list.append(len(pts1))
-    
-    batched_features = torch.from_numpy(np.concatenate(batched_features_list, axis=0))
-    batched_points = torch.from_numpy(np.concatenate(batched_points_list, axis=0))
+
+    batched_features = torch.from_numpy(
+        np.concatenate(batched_features_list, axis=0))
+    batched_points = torch.from_numpy(
+        np.concatenate(batched_points_list, axis=0))
     batched_lengths = torch.from_numpy(np.array(batched_lengths_list)).int()
 
     # Starting radius of convolutions
@@ -119,7 +124,8 @@ def collate_fn_descriptor(list_data, config, neighborhood_limits):
                 r = r_normal * config.deform_radius / config.conv_radius
             else:
                 r = r_normal
-            conv_i = batch_neighbors_kpconv(batched_points, batched_points, batched_lengths, batched_lengths, r, neighborhood_limits[layer])
+            conv_i = batch_neighbors_kpconv(
+                batched_points, batched_points, batched_lengths, batched_lengths, r, neighborhood_limits[layer])
 
         else:
             # This layer only perform pooling, no neighbors required
@@ -135,7 +141,8 @@ def collate_fn_descriptor(list_data, config, neighborhood_limits):
             dl = 2 * r_normal / config.conv_radius
 
             # Subsampled points
-            pool_p, pool_b = batch_grid_subsampling_kpconv(batched_points, batched_lengths, sampleDl=dl)
+            pool_p, pool_b = batch_grid_subsampling_kpconv(
+                batched_points, batched_lengths, sampleDl=dl)
 
             # Radius of pooled neighbors
             if 'deformable' in block:
@@ -144,10 +151,12 @@ def collate_fn_descriptor(list_data, config, neighborhood_limits):
                 r = r_normal
 
             # Subsample indices
-            pool_i = batch_neighbors_kpconv(pool_p, batched_points, pool_b, batched_lengths, r, neighborhood_limits[layer])
-            
+            pool_i = batch_neighbors_kpconv(
+                pool_p, batched_points, pool_b, batched_lengths, r, neighborhood_limits[layer])
+
             # Upsample indices (with the radius of the next layer to keep wanted density)
-            up_i = batch_neighbors_kpconv(batched_points, pool_p, batched_lengths, pool_b, 2 * r, neighborhood_limits[layer])
+            up_i = batch_neighbors_kpconv(
+                batched_points, pool_p, batched_lengths, pool_b, 2 * r, neighborhood_limits[layer])
 
         else:
             # No pooling in the end of this layer, no pooling indices required
@@ -188,6 +197,7 @@ def collate_fn_descriptor(list_data, config, neighborhood_limits):
 
     return dict_inputs
 
+
 def calibrate_neighbors(dataset, config, collate_fn, keep_ratio=0.8, samples_threshold=2000):
     timer = Timer()
     last_display = timer.total_time
@@ -199,10 +209,12 @@ def calibrate_neighbors(dataset, config, collate_fn, keep_ratio=0.8, samples_thr
     # Get histogram of neighborhood sizes i in 1 epoch max.
     for i in range(len(dataset)):
         timer.tic()
-        batched_input = collate_fn([dataset[i]], config, neighborhood_limits=[hist_n] * config.num_layers)
+        batched_input = collate_fn([dataset[i]], config, neighborhood_limits=[
+                                   hist_n] * config.num_layers)
 
         # update histogram
-        counts = [torch.sum(neighb_mat < neighb_mat.shape[0], dim=1).numpy() for neighb_mat in batched_input['neighbors']]
+        counts = [torch.sum(neighb_mat < neighb_mat.shape[0], dim=1).numpy()
+                  for neighb_mat in batched_input['neighbors']]
         hists = [np.bincount(c, minlength=hist_n)[:hist_n] for c in counts]
         neighb_hists += np.vstack(hists)
         timer.toc()
@@ -222,9 +234,11 @@ def calibrate_neighbors(dataset, config, collate_fn, keep_ratio=0.8, samples_thr
 
     return neighborhood_limits
 
+
 def get_dataloader(dataset, batch_size=2, num_workers=4, shuffle=True, neighborhood_limits=None):
     if neighborhood_limits is None:
-        neighborhood_limits = calibrate_neighbors(dataset, dataset.config, collate_fn=collate_fn_descriptor)
+        neighborhood_limits = calibrate_neighbors(
+            dataset, dataset.config, collate_fn=collate_fn_descriptor)
     print("neighborhood:", neighborhood_limits)
     dataloader = torch.utils.data.DataLoader(
         dataset,
@@ -232,14 +246,15 @@ def get_dataloader(dataset, batch_size=2, num_workers=4, shuffle=True, neighborh
         shuffle=shuffle,
         num_workers=num_workers,
         # https://discuss.pytorch.org/t/supplying-arguments-to-collate-fn/25754/4
-        collate_fn=partial(collate_fn_descriptor, config=dataset.config, neighborhood_limits=neighborhood_limits),
+        collate_fn=partial(collate_fn_descriptor, config=dataset.config,
+                           neighborhood_limits=neighborhood_limits),
         drop_last=False
     )
     return dataloader, neighborhood_limits
 
 
 if __name__ == '__main__':
-    from datasets.ThreeDMatch import  ThreeDMatchDataset, ThreeDMatchTestset
+    from datasets.ThreeDMatch import ThreeDMatchDataset, ThreeDMatchTestset
     from easydict import EasyDict as edict
     import json
     chosen_snap = 'D3Feat07272004_005'
@@ -257,9 +272,11 @@ if __name__ == '__main__':
     for i in range(config.num_layers-1):
         config.architecture.append('nearest_upsample')
         config.architecture.append('unary')
-    dset = ThreeDMatchDataset(root='/ssd2/xuyang/3DMatch', downsample=0.05, config=config)
+    dset = ThreeDMatchDataset(
+        root='/ssd2/xuyang/3DMatch', downsample=0.05, config=config)
 
-    dataloader, neighborhood_limits = get_dataloader(dset, batch_size=1, num_workers=10)
+    dataloader, neighborhood_limits = get_dataloader(
+        dset, batch_size=1, num_workers=10)
     import pdb
     pdb.set_trace()
     import time
