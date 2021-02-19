@@ -243,8 +243,6 @@ class Trainer(object):
             self.scheduler.load_state_dict(state['scheduler'])
             self.optimizer.load_state_dict(state['optimizer'])
             self.best_loss = state['best_loss']
-            import pdb
-            pdb.set_trace()
             # self.best_acc = state['best_acc']
         else:
             raise ValueError(f"=> no checkpoint found at '{resume}'")

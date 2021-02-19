@@ -16,7 +16,7 @@ from torch import nn
 import torch
 import sys
 import importlib
-sys.path.append("ext/benchmark")
+#sys.path.append("ext/benchmark_t")
 
 
 class KITTIConfig:
@@ -44,18 +44,25 @@ class KITTIConfig:
         #########################
 
         self.architecture = ['simple',
-                             'resnetb',
-                             'resnetb_strided',
-                             'resnetb',
-                             'resnetb_strided',
-                             'resnetb',
-                             'resnetb_strided',
-                             'resnetb',
-                             'resnetb_strided',
-                             'resnetb',
-                             'nearest_upsample',
-                             'unary',]
-#
+                        'resnetb',
+                        'resnetb_strided',
+                        'resnetb',
+                        'resnetb_strided',
+                        'resnetb',
+                        'resnetb_strided',
+                        'resnetb',
+                        'resnetb_strided',
+                        'resnetb',
+                        'nearest_upsample',
+                        'unary',
+                        'nearest_upsample',
+                        'unary',
+                        'nearest_upsample',
+                        'unary',
+                        'nearest_upsample',
+                        'unary',
+                        'last_unary']
+#    
         # KPConv specific parameters
         self.num_kernel_points = 15
         self.first_subsampling_dl = 0.30
@@ -203,8 +210,6 @@ if __name__ == '__main__':
     print("Network Architecture:\n", "".join(
         [layer+'\n' for layer in config.architecture]))
 
-    import pdb
-    pdb.set_trace()
     config.model = KPFCNN(config)
 
     # create optimizer
@@ -230,7 +235,7 @@ if __name__ == '__main__':
     )
 
     # create dataset and dataloader
-    cfg = importlib.import_module("configs.config")
+    cfg = importlib.import_module("ext.benchmark_tools.configs.config_bb8")
     train_set = KITTIMapDataset("train", cfg,
                                 config_d3feat=config, root=config.root)  # , config=config,
     # downsample=config.downsample,

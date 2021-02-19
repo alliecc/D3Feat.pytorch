@@ -165,14 +165,33 @@ class KITTIMapDataset(PairwiseDataset):
         # to match the dataset file used in the benchmark
         self.split = split
         self.cfg = cfg
-
+        self.transform_map=False
         self.read_data()
 
     def __len__(self):
         return self.length
 
     def __getitem__(self, idx):  # split, idx):
-        drive = self.data["id_log"][idx]  # self.files[self.split][idx][0]
+
+        if self.split == "test":
+            sample =  self.list_test_sample[idx]
+
+        else:
+            T_noise = self.generate_noise_T()
+            sample =   self.get_sample(idx, T_noise)
+
+            if sample["target"].points.shape[0]<2000:
+                T_noise = self.generate_noise_T()
+                sample =   self.get_sample(idx, T_noise)
+
+
+
+        xyz0 = sample["source"].points
+        xyz1 = sample["target"].points
+        
+        
+        gt_trans = torch.Tensor(self.data["T_map"][idx])
+        #drive = self.data["id_log"][idx]  # self.files[self.split][idx][0]
         #t0, t1 = self.files[self.split][idx][1], self.files[self.split][idx][2]
 
         # LiDAR is the target
@@ -180,13 +199,13 @@ class KITTIMapDataset(PairwiseDataset):
         #xyzr1 = np.fromfile(fname1, dtype=np.float32).reshape(-1, 4)
         #xyz1 = xyzr1[:, :3]
 
-        xyz1 = self.load_kitti_scan(idx)
-        # map is the source
-        xyz0 = self.get_local_map(
-            self.data["T_map"][idx], self.data["T_map"][idx], str(drive))
-
-        # .to(self.config.device)# # M2
-        trans = torch.Tensor(np.linalg.inv(self.data["T_map"][idx]))
+        #xyz1 = self.load_kitti_scan(idx)
+        ## map is the source
+        #xyz0 = self.get_local_map(
+        #    self.data["T_map"][idx], self.data["T_map"][idx], str(drive))
+#
+        ## .to(self.config.device)# # M2
+        #trans = torch.Tensor(np.linalg.inv(self.data["T_map"][idx]))
 
         # pcd0 = make_open3d_point_cloud(xyz0)#.cpu().numpy())
         #pcd1 = make_open3d_point_cloud(xyz1)
@@ -201,18 +220,23 @@ class KITTIMapDataset(PairwiseDataset):
             pcd1 = make_open3d_point_cloud(xyz1)
             matching_search_voxel_size = self.matching_search_voxel_size
             matches = get_matching_indices(
-                pcd0, pcd1, trans.cpu().numpy(), matching_search_voxel_size)
+                pcd0, pcd1, gt_trans.cpu().numpy(), matching_search_voxel_size)
 
         # align the two point cloud into one corredinate system.
         matches = np.array(matches)
         # pcd0.transform(trans)
 
-        pcd0.transform(trans.cpu().numpy())
-        src_points = np.array(pcd0.points)  # gt point clouds
-        tgt_points = np.array(pcd1.points)
-        src_pcd = pcd0
-        tgt_pcd = pcd1
-
+        #pcd0.transform(trans.cpu().numpy())
+        src_points = xyz0#np.array(pcd0.points)  # gt point clouds
+        tgt_points = xyz1#np.array(pcd1.points)
+        #src_pcd = pcd0
+        #tgt_pcd = pcd1
+        #open3d.io.write_point_cloud("src_pcd.ply", pcd0)
+        #pcd0.transform(gt_trans.cpu().numpy())
+        #open3d.io.write_point_cloud("src_pcd_gt.ply", pcd0)
+        #open3d.io.write_point_cloud("tgt_pcd.ply", pcd1)
+        #import pdb; pdb.set_trace()
+#
         #open3d.io.write_point_cloud("src_pcd.ply", pcd0)
         #open3d.io.write_point_cloud("tgt_pcd.ply", pcd1)
 
@@ -222,27 +246,27 @@ class KITTIMapDataset(PairwiseDataset):
         else:
             sel_corr = matches
 
-        if self.split == "test":
-            gt_trans = torch.inverse(self.list_T_gt[idx])
-        else:
-            # data augmentation
-            gt_trans = np.eye(4).astype(np.float32)
-            R = rotation_matrix(self.config.augment_axis,
-                                self.config.augment_rotation)
-            T = translation_matrix(self.config.augment_translation)
-            gt_trans[0:3, 0:3] = R
-            gt_trans[0:3, 3] = T
+        #if self.split == "test":
+        #    gt_trans = torch.inverse(self.list_T_gt[idx])
+        #else:
+        #    # data augmentation
+        #    gt_trans = np.eye(4).astype(np.float32)
+        #    R = rotation_matrix(self.config.augment_axis,
+        #                        self.config.augment_rotation)
+        #    T = translation_matrix(self.config.augment_translation)
+        #    gt_trans[0:3, 0:3] = R
+        #    gt_trans[0:3, 3] = T
+#
+        #tgt_pcd.transform(gt_trans)
+        #src_points = np.array(src_pcd.points)
+        #tgt_points = np.array(tgt_pcd.points)
+        #src_points += np.random.rand(
+        #    src_points.shape[0], 3) * self.config.augment_noise
+        #tgt_points += np.random.rand(
+        #    tgt_points.shape[0], 3) * self.config.augment_noise
 
-        tgt_pcd.transform(gt_trans)
-        src_points = np.array(src_pcd.points)
-        tgt_points = np.array(tgt_pcd.points)
-        src_points += np.random.rand(
-            src_points.shape[0], 3) * self.config.augment_noise
-        tgt_points += np.random.rand(
-            tgt_points.shape[0], 3) * self.config.augment_noise
-
-        sel_P_src = src_points[sel_corr[:, 0], :].astype(np.float32)
-        sel_P_tgt = tgt_points[sel_corr[:, 1], :].astype(np.float32)
+        sel_P_src = src_points.cpu().numpy()[sel_corr[:, 0], :].astype(np.float32)
+        sel_P_tgt = tgt_points.cpu().numpy()[sel_corr[:, 1], :].astype(np.float32)
         dist_keypts = cdist(sel_P_src, sel_P_src)
 
         pts0 = src_points
@@ -254,6 +278,7 @@ class KITTIMapDataset(PairwiseDataset):
                 pts0.shape[0] * 0.99), replace=False)] = 0
             feat1[np.random.choice(pts1.shape[0], int(
                 pts1.shape[0] * 0.99), replace=False)] = 0
+
 
         return pts0, pts1, feat0, feat1, sel_corr, dist_keypts
 
@@ -797,28 +822,19 @@ class ArgoverseMapDataset(ArgoverseTrackingDataset):  # PairwiseDataset from the
             T_noise = self.generate_noise_T()
             sample =   self.get_sample(idx, T_noise)
 
+
         xyz0 = sample["source"].points
         xyz1 = sample["target"].points
         
-        
         gt_trans = torch.Tensor(self.data["T_map"][idx])
-        #trans_gt= torch.Tensor(sample["T_init"])
-        #drive = self.data["id_log"][idx]  # self.files[self.split][idx][0]
 
-
-        #xyz1 =self.load_argo_scan_from_path(self.data["path_raw_points"][idx])
-        # map is the source
-        #xyz0 = self.get_local_map(self.data["T_map"][idx], self.data["T_map"][idx], str(drive))
-
-        # .to(self.config.device)# # M2
-        #trans = torch.Tensor(np.linalg.inv(self.data["T_map"][idx]))
         unaligned_anc_points = xyz0  # np.array(pcd0.points)
         unaligned_pos_points = xyz1  # np.array(pcd1.points)
 
         if True:  # self.split == 'train' or self.split == 'val':
 
-            pcd0 = make_open3d_point_cloud(xyz0)  # .cpu().numpy())
-            pcd1 = make_open3d_point_cloud(xyz1)
+            pcd0 = make_open3d_point_cloud(xyz0.cpu().numpy())  # .cpu().numpy())
+            pcd1 = make_open3d_point_cloud(xyz1.cpu().numpy())
 
             #pcd0.transform(trans.cpu().numpy())
             #print("matching_search_voxel_size",self.matching_search_voxel_size)
@@ -840,6 +856,7 @@ class ArgoverseMapDataset(ArgoverseTrackingDataset):  # PairwiseDataset from the
         #pcd0.transform(gt_trans.cpu().numpy())
         #open3d.io.write_point_cloud("src_pcd_gt.ply", pcd0)
         #open3d.io.write_point_cloud("tgt_pcd.ply", pcd1)
+        #import pdb; pdb.set_trace()
 
         if len(matches) > self.config.num_node:
             sel_corr = matches[np.random.choice(

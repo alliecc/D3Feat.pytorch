@@ -42,20 +42,26 @@ class KITTIConfig:
         #########################
         # Architecture definition
         #########################
-
         self.architecture = ['simple',
-                             'resnetb',
-                             'resnetb_strided',
-                             'resnetb',
-                             'resnetb_strided',
-                             'resnetb',
-                             'resnetb_strided',
-                             'resnetb',
-                             'resnetb_strided',
-                             'resnetb',
-                             'nearest_upsample',
-                             'unary',]
-#
+                        'resnetb',
+                        'resnetb_strided',
+                        'resnetb',
+                        'resnetb_strided',
+                        'resnetb',
+                        'resnetb_strided',
+                        'resnetb',
+                        'resnetb_strided',
+                        'resnetb',
+                        'nearest_upsample',
+                        'unary',
+                        'nearest_upsample',
+                        'unary',
+                        'nearest_upsample',
+                        'unary',
+                        'nearest_upsample',
+                        'unary',
+                        'last_unary']
+#    
         # KPConv specific parameters
         self.num_kernel_points = 15
         self.first_subsampling_dl = 0.30
@@ -229,7 +235,7 @@ if __name__ == '__main__':
     )
 
     # create dataset and dataloader
-    cfg = importlib.import_module("ext.benchmark_tools.configs.config_bb10")
+    cfg = importlib.import_module("ext.benchmark_tools.configs.config_bb8")
     train_set = ArgoverseMapDataset("train", cfg,
                                 config_d3feat=config, root=config.root)  # , config=config,
     # downsample=config.downsample,

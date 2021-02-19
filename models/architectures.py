@@ -304,8 +304,6 @@ class KPFCNN(nn.Module):
     def forward(self, batch):
 
         # Get input features
-        import pdb
-        pdb.set_trace()
 
         x = batch['features'].clone().detach()
 
@@ -327,6 +325,7 @@ class KPFCNN(nn.Module):
         return features, scores
 
     def detection_scores(self, inputs, features):
+
         neighbor = inputs['neighbors'][0]  # [n_points, n_neighbors]
         first_pcd_length, second_pcd_length = inputs['stack_lengths'][0]
 
@@ -352,9 +351,9 @@ class KPFCNN(nn.Module):
 
         # local max score (saliency score)
         # [n_points, n_neighbors, 64]
+
         neighbor_features = features[neighbor, :]
-        neighbor_features_sum = torch.sum(
-            neighbor_features, dim=-1)  # [n_points, n_neighbors]
+        neighbor_features_sum = torch.sum(neighbor_features, dim=-1)  # [n_points, n_neighbors]
         neighbor_num = (neighbor_features_sum != 0).sum(
             dim=-1, keepdims=True)  # [n_points, 1]
         neighbor_num = torch.max(neighbor_num, torch.ones_like(neighbor_num))
@@ -362,6 +361,7 @@ class KPFCNN(nn.Module):
             neighbor_features, dim=1) / neighbor_num  # [n_points, 64]
         local_max_score = F.softplus(
             features - mean_features)  # [n_points, 64]
+
 
         # calculate the depth-wise max score
         depth_wise_max = torch.max(features, dim=1, keepdims=True)[
